@@ -271,7 +271,7 @@
         // ====================================================================
         
         // 🚨 중요: MJPEG 스트리머가 실행 중인 주소로 변경해야 합니다.
-        const MJPEG_STREAM_URL = `http://${ROSBRIDGE_SERVER_IP}:8080/stream?topic=/camera/image_raw`; 
+        const MJPEG_STREAM_URL = `http://${ROSBRIDGE_SERVER_IP}:8000/stream?topic=/camera/image_raw`; 
 
         const videoContainer = document.getElementById('video-container');
         const webcamFeed = document.getElementById('webcam-feed');

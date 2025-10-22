@@ -5,10 +5,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 import models, schemas # models.py, schemas.py 파일이 있다고 가정
-from passlib.context import CryptContext
+#from passlib.context import CryptContext
+from utils import pwd_context
 
 # 비밀번호 해싱 설정 (main.py와 통일)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+#pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # **********************************************
 # * 유틸리티 함수

@@ -1,4 +1,4 @@
-const API_URL = "http://13.125.247.94:8000";  // 👈 EC2 서버 IP
+const API_URL = "http://127.0.0.1:8000";  // 👈 EC2 서버 IP
 
 document.getElementById("loginBtn").addEventListener("click", async () => {
   const username = document.getElementById("username").value;
