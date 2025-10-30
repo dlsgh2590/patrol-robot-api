@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 제어 테스트</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f4f7f9; }
+    </style>
+</head>
+<body class="p-6 h-screen flex flex-col items-center">
+
+    <div class="max-w-xl w-full bg-white p-8 rounded-xl shadow-2xl border border-gray-100">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">로봇 제어 WebSocket 테스터</h1>
+        
+        <div class="mb-4">
+            <label for="websocketUrl" class="block text-sm font-medium text-gray-700">WebSocket URL</label>
+            <input type="text" id="websocketUrl" value="ws://127.0.0.1:8000/ws/control" 
+                   class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm bg-gray-50">
+        </div>
+
+        <div class="flex space-x-4 mb-6">
+            <button id="connectButton" onclick="connect()" 
+                    class="flex-1 px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition duration-150">
+                연결
+            </button>
+            <button id="disconnectButton" onclick="disconnect()" disabled 
+                    class="flex-1 px-4 py-2 bg-red-500 text-white font-semibold rounded-lg shadow-md hover:bg-red-600 transition duration-150 disabled:opacity-50">
+                연결 해제
+            </button>
+        </div>
+
+        <div class="mb-6">
+            <label for="messageInput" class="block text-sm font-medium text-gray-700">보낼 명령어 (JSON 또는 텍스트)</label>
+            <input type="text" id="messageInput" value='{"cmd": "move", "linear": 0.5}' 
+                   class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-green-500 focus:border-green-500 sm:text-sm">
+            <button id="sendButton" onclick="sendMessage()" disabled
+                    class="mt-2 w-full px-4 py-2 bg-green-500 text-white font-semibold rounded-lg shadow-md hover:bg-green-600 transition duration-150 disabled:opacity-50">
+                명령 전송
+            </button>
+        </div>
+
+        <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+            <h3 class="text-lg font-semibold text-gray-800 mb-2">상태 및 로그</h3>
+            <div id="status" class="text-sm font-medium text-gray-600 mb-2">상태: 연결되지 않음</div>
+            <textarea id="log" rows="8" readonly class="w-full p-2 text-xs bg-white border border-gray-300 rounded-md resize-none"></textarea>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        const statusElement = document.getElementById('status');
+        const logElement = document.getElementById('log');
+        const connectButton = document.getElementById('connectButton');
+        const disconnectButton = document.getElementById('disconnectButton');
+        const sendButton = document.getElementById('sendButton');
+
+        function log(message) {
+            const now = new Date().toLocaleTimeString();
+            logElement.value += `[${now}] ${message}\n`;
+            logElement.scrollTop = logElement.scrollHeight; // 스크롤 하단으로 이동
+        }
+
+        function setStatus(text, color = 'gray') {
+            statusElement.textContent = `상태: ${text}`;
+            statusElement.className = `text-sm font-medium mb-2 text-${color}-600`;
+        }
+        
+        function updateButtons(isConnected) {
+            connectButton.disabled = isConnected;
+            disconnectButton.disabled = !isConnected;
+            sendButton.disabled = !isConnected;
+        }
+
+        function connect() {
+            if (ws) {
+                log('이미 연결되어 있습니다.');
+                return;
+            }
+            
+            const url = document.getElementById('websocketUrl').value;
+            log(`WebSocket 연결 시도: ${url}`);
+            
+            try {
+                ws = new WebSocket(url);
+                setStatus('연결 중...', 'yellow');
+
+                ws.onopen = () => {
+                    setStatus('연결 성공!', 'green');
+                    log('✅ 서버에 성공적으로 연결되었습니다.');
+                    updateButtons(true);
+                };
+
+                ws.onmessage = (event) => {
+                    log(`◀️ 서버 응답: ${event.data}`);
+                };
+
+                ws.onclose = (event) => {
+                    setStatus('연결 종료됨', 'red');
+                    log(`❌ 연결 종료 (코드: ${event.code}, 이유: ${event.reason || '없음'})`);
+                    ws = null;
+                    updateButtons(false);
+                };
+
+                ws.onerror = (error) => {
+                    setStatus('오류 발생', 'red');
+                    log(`🔥 WebSocket 오류: ${error.message || '알 수 없는 오류'}`);
+                    ws.close();
+                };
+            } catch (e) {
+                setStatus('연결 실패', 'red');
+                log(`🚨 연결 시도 중 예외 발생: ${e.message}`);
+                ws = null;
+                updateButtons(false);
+            }
+        }
+
+        function disconnect() {
+            if (ws) {
+                log('WebSocket 연결 해제 요청...');
+                ws.close();
+                ws = null;
+                setStatus('연결 해제됨', 'red');
+                updateButtons(false);
+            } else {
+                log('연결된 WebSocket이 없습니다.');
+            }
+        }
+
+        function sendMessage() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const message = document.getElementById('messageInput').value;
+                ws.send(message);
+                log(`➡️ 명령 전송: ${message}`);
+            } else {
+                log('❗️ WebSocket이 연결되지 않았거나 닫힌 상태입니다.');
+                setStatus('연결 필요', 'orange');
+            }
+        }
+
+        // 초기 버튼 상태 설정
+        updateButtons(false);
+
+    </script>
+</body>
+</html>

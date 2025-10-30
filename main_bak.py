@@ -1,14 +1,14 @@
 import os
 import sys
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 
 import uvicorn
 import crud, models, schemas 
-from databases import SessionLocal, engine, Base, get_db
+from databases import SessionLocal, engine, Base, get_db # databases 파일에서 필요한 것들을 모두 가져옵니다.
 
-from fastapi import FastAPI, Depends, HTTPException, status, Request, Body, Form, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Body, Form
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 from passlib.context import CryptContext
-
+from fastapi.responses import JSONResponse
 
 # 환경 변수 로드 (.env 파일 사용 시)
 load_dotenv()
@@ -394,63 +394,6 @@ def update_user_post(
 
     success_msg = f"사용자 '{updated_user.name}'의 정보가 성공적으로 업데이트되었습니다."
     return RedirectResponse(url=f"/users?success={success_msg}", status_code=status.HTTP_303_SEE_OTHER)
-
-
-# **********************************************
-# * 6. WebSocket 로봇 제어 엔드포인트 (추가됨)
-# **********************************************
-
-class ConnectionManager:
-    """여러 WebSocket 연결을 관리하는 클래스"""
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        print(f"[WS] 새로운 연결 수립: 총 {len(self.active_connections)}개")
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-        print(f"[WS] 연결 해제: 총 {len(self.active_connections)}개")
-
-    async def send_personal_message(self, message: str, websocket: WebSocket):
-        await websocket.send_text(message)
-
-    async def broadcast(self, message: str):
-        for connection in self.active_connections:
-            await connection.send_text(message)
-
-manager = ConnectionManager()
-
-@app.websocket("/ws/control")
-async def websocket_endpoint(websocket: WebSocket):
-    """
-    로봇 제어용 WebSocket 엔드포인트
-    - 클라이언트(앱)에서 조이스틱 명령을 받거나 로봇 상태를 보냅니다.
-    """
-    await manager.connect(websocket)
-    try:
-        while True:
-            # 클라이언트로부터 텍스트 메시지를 수신 (로봇 제어 명령)
-            data = await websocket.receive_text()
-            
-            # 수신된 제어 명령을 터미널에 출력
-            print(f"[WS RECEIVE] 명령 수신: {data}")
-            
-            # 로봇에 명령을 전달하는 로직 (예: ROS topic publish 또는 직렬 통신)은 여기에 구현되어야 합니다.
-            # 지금은 간단히 수신한 메시지를 다시 클라이언트에게 응답합니다.
-            await manager.send_personal_message(f"서버 응답: 명령({data}) 접수됨", websocket)
-            
-            # (선택 사항) 만약 여러 제어 클라이언트가 있다면, 모든 클라이언트에게 브로드캐스트할 수 있습니다.
-            # await manager.broadcast(f"New command received: {data}")
-
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        print("[WS] 클라이언트 연결이 끊어졌습니다.")
-    except Exception as e:
-        manager.disconnect(websocket)
-        print(f"[WS ERROR] 통신 중 오류 발생: {e}")
 
 
 if __name__ == "__main__":

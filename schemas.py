@@ -46,3 +46,14 @@ class UserUpdate(BaseModel):
 class LoginSchema(BaseModel):
     username: str
     password: str
+
+# 앱용ㅇ 로그인 요청/응답 스키마 추가
+class LoginResponse(BaseModel):
+    status: str
+    role: Optional[str] = None
+    message: Optional[str] = None
+
+class LoginRequest(BaseModel):
+    employee_number: str
+    username: str
+    password: str
