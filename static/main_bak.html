@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - 순찰 로봇 관제 대시보드</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- ROS Bridge Library (roslibjs) -->
+    <script src="https://cdn.jsdelivr.net/npm/roslib@1.0.1/build/roslib.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #e2e8f0; /* Gray-200 */
+        }
+        .dashboard-card {
+            background-color: #ffffff;
+            border-radius: 1rem;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transition: transform 0.3s ease;
+        }
+        .metric-value {
+            font-size: 2.5rem;
+            font-weight: 800;
+            color: #1e3a8a; /* Blue-900 */
+        }
+        #map-canvas {
+            border: 2px solid #cbd5e1; /* Slate-300 */
+        }
+        /* 로딩 스피너 스타일 */
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="flex justify-between items-center mb-8 pb-4 border-b-2 border-blue-200">
+            <h1 class="text-4xl font-extrabold text-gray-800">
+                순찰 로봇 관제 대시보드
+            </h1>
+            <div class="flex items-center space-x-4">
+                <div class="text-lg font-bold text-gray-700">
+                    <span>{{ username }}</span>님 환영합니다.
+                </div>
+                <div id="ros-status" class="flex items-center space-x-2 text-sm font-semibold">
+                    <span id="status-indicator" class="w-3 h-3 rounded-full bg-red-500"></span>
+                    <span id="status-text" class="text-red-700">ROS 연결 중...</span>
+                </div>
+                {% if is_admin %}
+                <a href="/users" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-2 px-4 rounded-lg transition duration-150">
+                    사용자 관리
+                </a>
+                {% endif %}
+                <a href="/logout" class="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg transition duration-150">
+                    로그아웃
+                </a>
+            </div>
+        </header>
+
+        <!-- 대시보드 그리드 레이아웃 -->
+        <div class="grid grid-cols-12 gap-8">
+            
+            <!-- 왼쪽 섹션: 지도 및 비디오 (col-span-8) -->
+            <div class="col-span-12 lg:col-span-8 space-y-8">
+                
+                <!-- 1. SLAM 지도 및 로봇 위치 -->
+                <div class="dashboard-card p-6">
+                    <h2 class="text-2xl font-semibold text-gray-700 mb-4">SLAM 순찰 지도 및 실시간 위치</h2>
+                    <div id="map-container" class="relative w-full aspect-video bg-gray-100 flex items-center justify-center rounded-lg overflow-hidden">
+                        <!-- 실제 맵 캔버스 영역. ros2djs 라이브러리가 필요함. -->
+                        <canvas id="map-canvas" width="700" height="500" class="w-full h-full object-cover rounded-lg"></canvas>
+                        <p id="map-placeholder" class="absolute text-gray-500 text-center p-4">
+                            ROS Bridge 연결 후 지도 토픽(/map)을 구독하여 여기에 표시됩니다. <br>
+                            로봇 위치는 (/robot_pose) 토픽을 통해 지도 위에 오버레이됩니다.
+                        </p>
+                    </div>
+                    <div id="robot-location" class="mt-4 text-gray-600 font-medium">
+                        현재 로봇 좌표: N/A
+                    </div>
+                </div>
+
+                <!-- 2. 실시간 웹캠 보기 -->
+                <div class="dashboard-card p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-2xl font-semibold text-gray-700">실시간 상황 보기 (웹캠)</h2>
+                        <button id="video-toggle-btn" onclick="toggleVideo()" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition duration-150">
+                            영상 시작
+                        </button>
+                    </div>
+                    <div id="video-container" class="w-full aspect-video bg-gray-800 flex items-center justify-center rounded-lg hidden">
+                        <!-- MJPEG 스트리밍 URL을 여기에 설정합니다. -->
+                        <img id="webcam-feed" alt="실시간 웹캠 피드" class="w-full h-full object-cover">
+                        <p id="video-placeholder" class="text-white text-lg">웹캠 스트리밍 준비 중...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 오른쪽 섹션: 로봇 상태값 (col-span-4) -->
+            <div class="col-span-12 lg:col-span-4 space-y-6">
+                <div class="dashboard-card p-6">
+                    <h2 class="text-2xl font-semibold text-gray-700 mb-6">로봇 실시간 상태</h2>
+                    
+                    <!-- 상태 메트릭 카드: 배터리 -->
+                    <div class="bg-blue-50 p-4 rounded-lg mb-4 border border-blue-200">
+                        <p class="text-sm text-blue-600 font-medium">실시간 배터리 잔량</p>
+                        <div class="flex justify-between items-center mt-1">
+                            <span id="metric-battery" class="metric-value">--%</span>
+                            <svg class="w-10 h-10 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-8a1 1 0 002 0V7a1 1 0 10-2 0v3z" clip-rule="evenodd"/>
+                            </svg>
+                        </div>
+                    </div>
+
+                    <!-- 상태 메트릭 카드: 순찰 거리 -->
+                    <div class="bg-indigo-50 p-4 rounded-lg mb-4 border border-indigo-200">
+                        <p class="text-sm text-indigo-600 font-medium">순찰 거리 (누적)</p>
+                        <div class="flex justify-between items-center mt-1">
+                            <span id="metric-distance" class="metric-value">-- m</span>
+                            <svg class="w-10 h-10 text-indigo-500" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                                <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/>
+                            </svg>
+                        </div>
+                    </div>
+
+                    <!-- 상태 메트릭 카드: 순찰 시간 -->
+                    <div class="bg-purple-50 p-4 rounded-lg mb-4 border border-purple-200">
+                        <p class="text-sm text-purple-600 font-medium">순찰 시간</p>
+                        <div class="flex justify-between items-center mt-1">
+                            <span id="metric-time" class="metric-value">-- min</span>
+                            <svg class="w-10 h-10 text-purple-500" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l3 3a1 1 0 001.414-1.414L11 9.586V6z" clip-rule="evenodd"/>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 로봇 제어 영역 (선택 사항) -->
+                <div class="dashboard-card p-6">
+                    <h2 class="text-2xl font-semibold text-gray-700 mb-4">로봇 제어</h2>
+                    <div class="grid grid-cols-3 gap-3">
+                        <button onclick="publishCommand('forward')" class="col-span-3 bg-gray-700 hover:bg-gray-800 text-white font-bold py-3 rounded-lg">전진</button>
+                        <button onclick="publishCommand('left')" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 rounded-lg">좌회전</button>
+                        <button onclick="publishCommand('stop')" class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg">정지</button>
+                        <button onclick="publishCommand('right')" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 rounded-lg">우회전</button>
+                        <button onclick="publishCommand('backward')" class="col-span-3 bg-gray-700 hover:bg-gray-800 text-white font-bold py-3 rounded-lg">후진</button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ====================================================================
+        // 1. ROS Bridge 설정
+        // ====================================================================
+        
+        // 🚨 중요: 로봇의 ROS Bridge 서버 주소로 변경해야 합니다.
+        const ROSBRIDGE_SERVER_IP = '192.168.0.100'; // 예시 IP
+        const ROSBRIDGE_PORT = 9090;
+        
+        const ros = new ROSLIB.Ros({
+            url: `ws://${ROSBRIDGE_SERVER_IP}:${ROSBRIDGE_PORT}`
+        });
+
+        const statusIndicator = document.getElementById('status-indicator');
+        const statusText = document.getElementById('status-text');
+
+        ros.on('connection', () => {
+            console.log('ROS Bridge에 성공적으로 연결되었습니다.');
+            statusIndicator.classList.remove('bg-red-500', 'bg-yellow-500');
+            statusIndicator.classList.add('bg-green-500');
+            statusText.textContent = 'ROS 연결됨';
+            statusText.classList.remove('text-red-700', 'text-yellow-700');
+            statusText.classList.add('text-green-700');
+            
+            // 연결 성공 시 토픽 구독 시작
+            subscribeToTopics();
+        });
+
+        ros.on('error', (error) => {
+            console.error('ROS Bridge 연결 오류:', error);
+            statusIndicator.classList.remove('bg-green-500', 'bg-yellow-500');
+            statusIndicator.classList.add('bg-red-500');
+            statusText.textContent = 'ROS 오류 발생';
+            statusText.classList.remove('text-green-700', 'text-yellow-700');
+            statusText.classList.add('text-red-700');
+        });
+
+        ros.on('close', () => {
+            console.log('ROS Bridge 연결이 끊어졌습니다. 재연결 시도 중...');
+            statusIndicator.classList.remove('bg-green-500', 'bg-red-500');
+            statusIndicator.classList.add('bg-yellow-500');
+            statusText.textContent = 'ROS 연결 끊김';
+            statusText.classList.remove('text-green-700', 'text-red-700');
+            statusText.classList.add('text-yellow-700');
+            
+            // 일정 시간 후 재연결 시도
+            setTimeout(() => {
+                ros.connect(`ws://${ROSBRIDGE_SERVER_IP}:${ROSBRIDGE_PORT}`);
+            }, 3000);
+        });
+
+        // ====================================================================
+        // 2. 토픽 구독
+        // ====================================================================
+        function subscribeToTopics() {
+            // 2.1. 로봇 위치 (Odometry 또는 Pose)
+            const poseListener = new ROSLIB.Topic({
+                ros: ros,
+                name: '/robot_pose', // 🚨 실제 로봇의 위치 토픽으로 변경
+                messageType: 'geometry_msgs/PoseStamped' // 🚨 실제 토픽 메시지 타입으로 변경
+            });
+
+            poseListener.subscribe((message) => {
+                const x = message.pose.position.x.toFixed(2);
+                const y = message.pose.position.y.toFixed(2);
+                // 지도에 실제 위치를 표시하는 로직이 여기에 들어가야 합니다. (복잡하므로 텍스트로만 표시)
+                document.getElementById('robot-location').textContent = `현재 로봇 좌표: X=${x} m, Y=${y} m`;
+            });
+
+            // 2.2. 로봇 상태 메트릭 (배터리, 거리, 시간)
+            const metricsListener = new ROSLIB.Topic({
+                ros: ros,
+                name: '/robot_metrics', // 🚨 실제 로봇 상태 토픽으로 변경 (Custom Message를 가정)
+                messageType: 'std_msgs/String' // 임시로 String 메시지를 가정
+            });
+
+            metricsListener.subscribe((message) => {
+                // 실제 ROS 환경에서는 JSON 또는 Custom Message를 파싱해야 함
+                // 여기서는 예시 더미 데이터만 업데이트합니다.
+                try {
+                    // const metrics = JSON.parse(message.data); 
+                    // document.getElementById('metric-battery').textContent = `${metrics.battery_level.toFixed(0)}%`;
+                    // document.getElementById('metric-distance').textContent = `${metrics.patrol_distance.toFixed(1)} m`;
+                    // document.getElementById('metric-time').textContent = `${(metrics.patrol_time / 60).toFixed(0)} min`;
+                    
+                    // 더미 데이터 업데이트 (예시)
+                    let currentBattery = parseInt(document.getElementById('metric-battery').textContent.replace('%', '')) || 95;
+                    currentBattery = (currentBattery > 70) ? currentBattery - 1 : 95;
+                    document.getElementById('metric-battery').textContent = `${currentBattery}%`;
+
+                    let currentDistance = parseFloat(document.getElementById('metric-distance').textContent.replace(' m', '')) || 15.0;
+                    currentDistance = currentDistance + 0.1;
+                    document.getElementById('metric-distance').textContent = `${currentDistance.toFixed(1)} m`;
+
+                    let currentTime = parseInt(document.getElementById('metric-time').textContent.replace(' min', '')) || 120;
+                    currentTime = currentTime + 1;
+                    document.getElementById('metric-time').textContent = `${currentTime} min`;
+                } catch (e) {
+                    console.error("Metrics 메시지 파싱 오류:", e);
+                }
+            });
+            
+            // 2.3. SLAM Map (nav_msgs/OccupancyGrid) 구독은 복잡하므로, 
+            // ros2djs 라이브러리 없이는 캔버스에 그리기 어렵습니다.
+            // UI에 캔버스만 준비해 둡니다.
+            console.log("지도 토픽(/map) 구독 준비 완료. 실제 렌더링은 ros2djs 라이브러리가 필요합니다.");
+        }
+
+
+        // ====================================================================
+        // 3. 웹캠 스트리밍 제어
+        // ====================================================================
+        
+        // 🚨 중요: MJPEG 스트리머가 실행 중인 주소로 변경해야 합니다.
+        const MJPEG_STREAM_URL = `http://${ROSBRIDGE_SERVER_IP}:8000/stream?topic=/camera/image_raw`; 
+
+        const videoContainer = document.getElementById('video-container');
+        const webcamFeed = document.getElementById('webcam-feed');
+        const videoToggleBtn = document.getElementById('video-toggle-btn');
+        let isVideoRunning = false;
+
+        function toggleVideo() {
+            if (!isVideoRunning) {
+                // 영상 시작
+                videoContainer.classList.remove('hidden');
+                webcamFeed.src = MJPEG_STREAM_URL;
+                videoToggleBtn.textContent = '영상 중지';
+                videoToggleBtn.classList.remove('bg-green-500', 'hover:bg-green-600');
+                videoToggleBtn.classList.add('bg-red-500', 'hover:bg-red-600');
+                isVideoRunning = true;
+            } else {
+                // 영상 중지
+                webcamFeed.src = ''; // 이미지 소스를 비워 스트리밍 중지
+                videoContainer.classList.add('hidden');
+                videoToggleBtn.textContent = '실시간상황보기';
+                videoToggleBtn.classList.remove('bg-red-500', 'hover:bg-red-600');
+                videoToggleBtn.classList.add('bg-green-500', 'hover:bg-green-600');
+                isVideoRunning = false;
+            }
+        }
+
+
+        // ====================================================================
+        // 4. 로봇 수동 제어 (Twist 명령 발행)
+        // ====================================================================
+        
+        const cmdVel = new ROSLIB.Topic({
+            ros: ros,
+            name: '/cmd_vel', // 🚨 실제 로봇의 속도 명령 토픽으로 변경
+            messageType: 'geometry_msgs/Twist'
+        });
+
+        function publishCommand(command) {
+            if (!ros.isConnected) {
+                console.warn('ROS Bridge에 연결되어 있지 않습니다. 명령을 보낼 수 없습니다.');
+                // 사용자에게 알림 (커스텀 모달 사용 권장)
+                alert('ROS 서버에 연결되어야 제어할 수 있습니다.');
+                return;
+            }
+
+            let linear = { x: 0.0, y: 0.0, z: 0.0 };
+            let angular = { x: 0.0, y: 0.0, z: 0.0 };
+            const speed = 0.5; // 선형 속도 (m/s)
+            const turn = 0.5;  // 각속도 (rad/s)
+
+            switch (command) {
+                case 'forward': linear.x = speed; break;
+                case 'backward': linear.x = -speed; break;
+                case 'left': angular.z = turn; break;
+                case 'right': angular.z = -turn; break;
+                case 'stop': break; // 모든 값이 0으로 유지
+
+                default: return;
+            }
+
+            const twist = new ROSLIB.Message({
+                linear: linear,
+                angular: angular
+            });
+
+            cmdVel.publish(twist);
+            console.log(`Command published: ${command}`);
+        }
+        
+        // ====================================================================
+        // 5. 초기화
+        // ====================================================================
+
+        window.onload = function() {
+            // 로봇의 ROS Bridge에 연결 시도
+            ros.connect();
+        };
+
+        // 경고: alert() 대신 커스텀 모달 UI를 사용해야 하지만, 
+        // 편의상 이 예시에서는 alert()를 사용했습니다. 실제 환경에서는 교체해주세요.
+        function alert(message) {
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = `<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                                    <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full">
+                                        <p class="text-lg font-bold text-red-600 mb-4">경고</p>
+                                        <p class="text-gray-700 mb-6">${message}</p>
+                                        <button onclick="this.closest('.fixed').remove()" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg w-full">확인</button>
+                                    </div>
+                                </div>`;
+            document.body.appendChild(tempDiv);
+        }
+    </script>
+</body>
+</html>
